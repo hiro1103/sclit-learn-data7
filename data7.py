@@ -1,58 +1,23 @@
-from sklearn import datasets
-from sklearn import pipeline
-from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import cross_val_score
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.pipeline import Pipeline
-from sklearn.base import clone
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-from sklearn.preprocessing import LabelEncoder
-from scipy.special import comb
+from matplotlib.pyplot import clf
 from sklearn.base import BaseEstimator
 from sklearn.base import ClassifierMixin
 from sklearn.preprocessing import LabelEncoder
+from sklearn.base import clone
 from sklearn.pipeline import _name_estimators
+from sklearn import datasets
+from sklearn.model_selection import GridSearchCV, train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import cross_val_score
+from sklearn.linear_model import LogisticRegression
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.pipeline import Pipeline
 from sklearn.metrics import roc_curve
 from sklearn.metrics import auc
-import math
-import matplotlib.pyplot as plt
+from itertools import product
 import numpy as np
-import operator
-
-
-def ensemble_error(n_classifier, error):
-    k_start = int(math.ceil(n_classifier/2.0))
-    proba = [comb(n_classifier, k) * error**k *
-             (1-error)**(n_classifier-k)
-             for k in range(k_start, n_classifier+1)]
-    return sum(proba)
-
-
-print(ensemble_error(n_classifier=11, error=0.25))
-
-error_range = np.arange(0.0, 1.01, 0.01)
-ens_errors = [ensemble_error(n_classifier=11, error=error)
-              for error in error_range]
-plt.plot(error_range, ens_errors,
-         label='Ensemble error', linewidth=2)
-plt.plot(error_range, error_range,
-         linestyle='--', label='Base error', linewidth=2)
-plt.xlabel('Base error')
-plt.ylabel('Base/Ensemble error')
-plt.legend(loc='upper left')
-plt.grid(alpha=0.5)
-plt.show()
-
-print(np.argmax(np.bincount([0, 0, 1], weights=[0.2, 0.2, 0.6])))
-
-ex = np.array([[0.9, 0.1],
-              [0.8, 0.2],
-               [0.4, 0.6]])
-p = np.average(ex, axis=0, weights=[0.2, 0.2, 0.6])
-print(p)
-print(np.argmax(p))
+import matplotlib.pyplot as plt
+from zmq import get_library_dirs
 
 
 class MajorityVoteClassifier(BaseEstimator,
@@ -175,6 +140,7 @@ for clf, label in zip(all_clf, clf_labels):
                              scoring='roc_auc')
     print("ROC AUC: %0.2f (+/- %0.2f) [%s]"
           % (scores.mean(), scores.std(), label))
+
 colors = ['black', 'orange', 'blue', 'green']
 linestyle = [':', '--', '-.', '-']
 for clf, label, clr, ls in zip(all_clf, clf_labels, colors, linestyle):
@@ -196,3 +162,67 @@ plt.grid(alpha=0.5)
 plt.xlabel('False positive rate (FPR)')
 plt.ylabel('True positive rate (TPR)')
 plt.show()
+
+sc = StandardScaler()
+X_train_std = sc.fit_transform(X_train)
+
+# 決定領域を描画する最小値、最大値を生成
+x_min = X_train_std[:, 0].min()-1
+x_max = X_train_std[:, 0].max()+1
+y_min = X_train_std[:, 1].min()-1
+y_max = X_train_std[:, 1].max()+1
+
+# グリッドポイントを生成
+xx, yy = np.meshgrid(np.arange(x_min, x_max, 0.1),
+                     np.arange(y_min, y_max, 0.1))
+
+# 描画領域を2行2列に分割
+f, axarr = plt.subplots(nrows=2, ncols=2,
+                        sharex='col',
+                        figsize=(7, 5))
+
+# 決定領域のプロット、青や赤の散布図の作成などを実行
+# 変数idxは各分類器を描画する行と列の位置を表すタプル
+for idx, clf, tt in zip(product([0, 1], [0, 1]), all_clf, clf_labels):
+    clf.fit(X_train_std, y_train)
+    Z = clf.predict(np.c_[xx.ravel(), yy.ravel()])
+    Z = Z.reshape(xx.shape)
+    axarr[idx[0], idx[1]].contourf(xx, yy, Z, alpha=0.3)
+    axarr[idx[0], idx[1]].scatter(X_train_std[y_train == 0, 0],
+                                  X_train_std[y_train == 0, 1],
+                                  c='blue',
+                                  marker='^',
+                                  s=50)
+    axarr[idx[0], idx[1]].scatter(X_train_std[y_train == 1, 0],
+                                  X_train_std[y_train == 1, 1],
+                                  c='green',
+                                  marker='o',
+                                  s=50)
+    axarr[idx[0], idx[1]].set_title(tt)
+plt.text(-3.5, -5.0,
+         s='Sepal width [standardized]',
+         ha='center', va='center', fontsize=12)
+
+plt.text(-12.5, 4.5,
+         s='Petal length [standardized]',
+         ha='center', va='center',
+         fontsize=12, rotation=90)
+plt.show()
+
+params = {'decisiontreeclassifier__max_depth': [1, 2],
+          'pipeline-1__clf__C': [0.001, 0.1, 100.0]}
+
+grid = GridSearchCV(estimator=mv_clf,
+                    param_grid=params,
+                    cv=10,
+                    scoring='roc_auc')
+grid.fit(X_train, y_train)
+
+for r, _ in enumerate(grid.cv_results_['mean_test_score']):
+    print("%0.3f +/- %0.2f %r"
+          % (grid.cv_results_['mean_test_score'][r],
+             grid.cv_results_['std_test_score'][r]/2.0,
+             grid.cv_results_['params'][r]))
+
+print('Best parameters: %s' % grid.best_params_)
+print('Accuracy: %.2f' % grid.best_score_)
